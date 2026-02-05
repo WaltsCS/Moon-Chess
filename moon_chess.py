@@ -2,10 +2,10 @@ import tkinter as tk
 from tkinter import messagebox
 import random
 
-class TicTacToeApp:
+class MoonChessApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("3-Piece Tic Tac Toe (Max 5 on board)")
+        self.root.title("Moon Chess")
         self.center_window(self.root, 400, 500)  # Center main window
 
         # core state
@@ -50,7 +50,7 @@ class TicTacToeApp:
         frame = tk.Frame(self.root, padx=20, pady=20)
         frame.pack(expand=True)
 
-        tk.Label(frame, text="3-Piece Tic Tac Toe", font=("Arial", 18, "bold")).grid(row=0, column=0, columnspan=2, pady=10)
+        tk.Label(frame, text="Moon Chess", font=("Arial", 18, "bold")).grid(row=0, column=0, columnspan=2, pady=10)
 
         # Mode
         tk.Label(frame, text="Mode:", font=("Arial", 12, "bold")).grid(row=1, column=0, sticky="w", pady=(10, 0))
@@ -76,19 +76,38 @@ class TicTacToeApp:
 
     def show_rules(self):
         rules_text = (
-            "3-Piece Tic Tac Toe Rules:\n\n"
+            "Moon Chess\n\n"
+
+            "BOARD\n"
             "• The game is played on a 3×3 grid.\n"
-            "• Each player can only have 3 pieces on the board at once.\n"
-            "• When a player already has 3 pieces and places another,\n"
-            "  their oldest piece disappears.\n"
-            "• NEW: At most 5 total pieces can be on the board at once.\n"
-            "  If a move would create 6 pieces total, the oldest piece\n"
-            "  overall disappears (X or O).\n"
-            "• You can place your next piece on a cell that will disappear.\n"
-            "• The goal remains the same: get 3 in a row horizontally,\n"
-            "  vertically, or diagonally."
+            "• It is just like the original Tic-Tac-Toe Game.\n\n"
+
+            "PER-PLAYER RULE (3 PIECES MAX)\n"
+            "• Each player may have at most 3 pieces on the board.\n"
+            "• If you already have 3 pieces and place another,\n"
+            "  your oldest piece is removed.\n"
+            "• Your oldest piece will flash before it disappears.\n"
+            "• You may place your next piece on that flashing cell.\n\n"
+
+            "GLOBAL RULE (5 PIECES MAX)\n"
+            "• At most 5 total pieces (X or O) may be on the board.\n"
+            "• If a move would create 6 pieces, the oldest piece\n"
+            "  overall is removed automatically.\n"
+            "• This global-oldest piece is shown in light gray.\n"
+            "• The global-oldest piece cannot be clicked or overwritten.\n\n"
+
+            "PLACEMENT RULES\n"
+            "• You may place a piece only on an empty cell or\n"
+            "  your own flashing oldest piece.\n"
+            "• You may not place a piece on any other occupied cell.\n\n"
+
+            "WIN CONDITION\n"
+            "• Get 3 in a row horizontally, vertically, or diagonally.\n"
+            "• Lines broken by piece removal do not count as wins."
         )
+
         messagebox.showinfo("Game Rules", rules_text)
+
 
     def create_game_screen(self):
         self.clear_root()
@@ -140,20 +159,15 @@ class TicTacToeApp:
 
     def get_removable_cells_for_move(self, player):
         """
-        For the current move by `player`, determine which occupied cell(s)
-        are guaranteed to be removed by the rules *as part of placing this move*.
-        This allows clicking on those occupied cells.
+        Only the per-player oldest (when player already has 3 pieces)
+        is allowed to be clicked/overwritten.
+        The GLOBAL oldest (for max-5 rule) is NOT clickable.
         """
         removable = set()
 
-        # per-player 3-piece rule
+        # per-player 3-piece rule (clickable overwrite allowed)
         if len(self.placement_order[player]) == 3:
             removable.add(self.placement_order[player][0])
-
-        # global 5-piece rule: if currently there are 5 pieces, placing one would make 6,
-        # so the oldest overall will be removed.
-        if self.count_pieces(self.board) >= 5 and len(self.global_order) > 0:
-            removable.add(self.global_order[0][1])
 
         return removable
 
@@ -165,7 +179,7 @@ class TicTacToeApp:
 
         removable = self.get_removable_cells_for_move(self.current_player)
 
-        # allowed if empty, OR it is a cell that will disappear this move
+        # allowed if empty, OR it is YOUR per-player oldest cell
         if self.board[index] != "" and index not in removable:
             return
 
@@ -200,18 +214,80 @@ class TicTacToeApp:
             return
         color = "gold" if player == "X" else "lightblue"
         btn = self.buttons[idx]
-        btn.configure(bg=color if to_colored else "SystemButtonFace")
+
+        if to_colored:
+            btn.configure(bg=color)
+        else:
+            btn.configure(bg="SystemButtonFace")
+            # when turning "off", global highlight might need to show again
+            self.update_global_oldest_highlight()
+
         self.flash_job[player] = self.root.after(
             400, lambda: self.flash_piece(player, idx, not to_colored)
-        )
+    )
+
 
     def stop_flashing(self, player):
         job = self.flash_job.get(player)
         if job:
             self.root.after_cancel(job)
             self.flash_job[player] = None
+
+        # reset all colors
         for i in range(9):
             self.buttons[i].configure(bg="SystemButtonFace")
+
+        # re-apply global oldest highlight if needed
+        self.update_global_oldest_highlight()
+    
+    def update_global_oldest_highlight(self):
+        """
+        Visually mark the GLOBAL oldest piece (next to be removed when total would exceed 5).
+        This is NOT clickable; it's only a cue.
+        """
+        if not self.buttons:
+            return
+
+        # First reset any previous global highlight (but keep per-player flashing intact)
+        self.clear_global_oldest_highlight()
+
+        # Only highlight when board is currently at the global limit (5 pieces)
+        if self.count_pieces(self.board) < 5:
+            return
+        if not self.global_order:
+            return
+
+        oldest_player, oldest_idx = self.global_order[0]
+
+        # Only highlight if that exact piece is still there
+        if self.board[oldest_idx] == oldest_player:
+            # Don't overwrite the per-player flashing color if it happens to be flashing
+            # (If it is flashing, it already stands out enough.)
+            if self.is_flashing_cell(oldest_idx):
+                return
+
+            self.buttons[oldest_idx].configure(bg="lightgray")
+
+
+    def clear_global_oldest_highlight(self):
+        """Remove only the global-oldest highlight (lightgray), without touching flashing jobs."""
+        if not self.buttons:
+            return
+        for btn in self.buttons:
+            if str(btn.cget("bg")) == "lightgray":
+                btn.configure(bg="SystemButtonFace")
+
+
+    def is_flashing_cell(self, idx):
+        """
+        Returns True if idx is currently the per-player oldest cell for X or O (thus flashing).
+        We use this to avoid fighting over bg color.
+        """
+        for p in ("X", "O"):
+            if len(self.placement_order[p]) == 3 and self.placement_order[p][0] == idx and self.flash_job[p] is not None:
+                return True
+        return False
+
 
     #  PLACEMENT + RULES 
     def remove_piece_at(self, idx):
@@ -248,9 +324,12 @@ class TicTacToeApp:
                     self.placement_order[oldest_player].remove(oldest_idx)
 
     def place_piece(self, player, index):
-        # If clicking an occupied cell, it MUST be removable this move.
+        # Only allow overwriting if it's the player's own oldest and they already have 3 pieces
         if self.board[index] != "":
-            self.remove_piece_at(index)
+            if len(self.placement_order[player]) == 3 and self.placement_order[player][0] == index:
+                self.remove_piece_at(index)  # remove own oldest, then place
+            else:
+                return  # illegal attempt to place on occupied cell
 
         # Place new piece
         self.board[index] = player
@@ -276,6 +355,7 @@ class TicTacToeApp:
     def refresh_board(self):
         for i, btn in enumerate(self.buttons):
             btn.config(text=self.board[i])
+        self.update_global_oldest_highlight()
 
     #  RESTART MENU 
     def show_restart_menu(self):
@@ -287,11 +367,11 @@ class TicTacToeApp:
         self.center_window(menu, 300, 160)
 
         tk.Label(menu, text="Restart Game Options", font=("Arial", 12, "bold")).pack(pady=10)
-        tk.Button(menu, text="🔁 Restart with Same Settings", width=25,
+        tk.Button(menu, text="Restart with Same Settings", width=25,
                   command=lambda: (menu.destroy(), self.start_game_from_existing_settings())).pack(pady=5)
-        tk.Button(menu, text="⚙️ Change Settings", width=25,
+        tk.Button(menu, text="Change Settings", width=25,
                   command=lambda: (menu.destroy(), self.create_start_screen())).pack(pady=5)
-        tk.Button(menu, text="❌ Cancel", width=25, command=menu.destroy).pack(pady=5)
+        tk.Button(menu, text="Cancel", width=25, command=menu.destroy).pack(pady=5)
 
     #  BOT LOGIC 
     def bot_move(self):
@@ -342,7 +422,7 @@ class TicTacToeApp:
         return random.choice(candidates) if candidates else None
 
     def bot_candidate_moves(self, player):
-        removable = self.get_removable_cells_for_move(player)
+        removable = self.get_removable_cells_for_move(player)  # ONLY per-player oldest
         return [i for i in range(9) if (self.board[i] == "" or i in removable)]
 
     def simulate_board(self, player, index):
@@ -376,8 +456,6 @@ class TicTacToeApp:
         removable = set()
         if len(po[player]) == 3:
             removable.add(po[player][0])
-        if count_pieces_local(b) >= 5 and len(go) > 0:
-            removable.add(go[0][1])
 
         # If occupied and removable -> remove first
         if b[index] != "" and index in removable:
@@ -445,5 +523,5 @@ class TicTacToeApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    app = TicTacToeApp(root)
+    app = MoonChessApp(root)
     root.mainloop()
